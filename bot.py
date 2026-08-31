@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 # Получаем токен и admin ID из переменных окружения
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "793216884"))
-ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID", "0"))
+ALLOWED_CHAT_ID = int(os.getenv("ALLOWED_CHAT_ID", "-1004290474956"))
 
 if not TOKEN:
     raise ValueError("❌ Токен бота не найден! Создай .env файл и добавь туда BOT_TOKEN")
