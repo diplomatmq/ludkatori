@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Токены и конфиденциальные данные
+config.py
+.env
+
+# Конфигурация бота
+config.json
+
+# База данных
+bot_database.db
+
+# Файл с подарками
+gifts.txt
+
+# Кэш Python
+__pycache__/

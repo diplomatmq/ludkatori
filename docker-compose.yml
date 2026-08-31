@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  ludkatori:
+    build: .
+    container_name: ludkatori
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data   # монтируем папку для SQLite .db файла
+    restart: unless-stopped
