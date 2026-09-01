@@ -69,6 +69,30 @@ storage = MemoryStorage()
 bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=storage)
 
+
+@dp.update()
+async def check_allowed_chat(update):
+    """Middleware для проверки чата"""
+    # Если ALLOWED_CHAT_ID не установлен (0), пропускаем все
+    if ALLOWED_CHAT_ID == 0:
+        return True
+    
+    # Проверяем сообщения
+    if hasattr(update, 'message') and update.message:
+        chat_id = update.message.chat.id
+        if chat_id != ALLOWED_CHAT_ID:
+            logger.info(f"Игнорируем сообщение из чата: {chat_id} (разрешен только: {ALLOWED_CHAT_ID})")
+            return False
+    
+    # Проверяем callback queries
+    if hasattr(update, 'callback_query') and update.callback_query:
+        chat_id = update.callback_query.message.chat.id
+        if chat_id != ALLOWED_CHAT_ID:
+            logger.info(f"Игнорируем callback из чата: {chat_id} (разрешен только: {ALLOWED_CHAT_ID})")
+            return False
+    
+    return True
+
 # Состояния для FSM
 class CustomCombo(StatesGroup):
     wheel1 = State()
