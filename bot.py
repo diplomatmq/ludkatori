@@ -1066,12 +1066,14 @@ async def dice_handler(message: Message):
                         # Кастомные эмодзи
                         emoji_victory = '<tg-emoji emoji-id="5271803701340706125">🎉</tg-emoji>'
                         emoji_link = '<tg-emoji emoji-id="5415758949129404605">🔗</tg-emoji>'
+                        emoji_bank = '<tg-emoji emoji-id="5307728856503844559">🏦</tg-emoji>'
                         
                         await message.reply(
                             f"{emoji_victory} <b>ПОБЕДИТЕЛЬ СОБЫТИЯ!</b>\n\n"
                             f"@{username} первым выбил {custom_emoji_text} {event['target_count']} раз!\n\n"
                             f"Всего попаданий: {progress['total_hits']}\n"
                             f"Событие завершено!{gift_text}\n\n"
+                            f"{emoji_bank} <a href=\"https://t.me/toriw9/c/6\">Банк NFT</a>\n"
                             f"{emoji_link} <a href=\"https://t.me/torionnft\">Наш канал</a>\n"
                             f"{emoji_link} <a href=\"https://t.me/toristarsbot\">Дешевые звезды</a>"
                         )
@@ -1117,12 +1119,14 @@ async def dice_handler(message: Message):
                         # Кастомные эмодзи
                         emoji_victory = '<tg-emoji emoji-id="5271803701340706125">🎉</tg-emoji>'
                         emoji_link = '<tg-emoji emoji-id="5415758949129404605">🔗</tg-emoji>'
+                        emoji_bank = '<tg-emoji emoji-id="5307728856503844559">🏦</tg-emoji>'
                         
                         await message.reply(
                             f"{emoji_victory} <b>ПОБЕДИТЕЛЬ СОБЫТИЯ!</b>\n\n"
                             f"@{username} выбил {custom_emoji_text} {event['target_count']} раз подряд!\n\n"
                             f"Серия: {progress['current_streak']}\n"
                             f"Событие завершено!{gift_text}\n\n"
+                            f"{emoji_bank} <a href=\"https://t.me/toriw9/c/6\">Банк NFT</a>\n"
                             f"{emoji_link} <a href=\"https://t.me/torionnft\">Наш канал</a>\n"
                             f"{emoji_link} <a href=\"https://t.me/toristarsbot\">Дешевые звезды</a>"
                         )
@@ -1183,9 +1187,11 @@ async def dice_handler(message: Message):
                 # Кастомные эмодзи для сообщения
                 emoji_victory = '<tg-emoji emoji-id="5271803701340706125">🎉</tg-emoji>'
                 emoji_link = '<tg-emoji emoji-id="5415758949129404605">🔗</tg-emoji>'
+                emoji_bank = '<tg-emoji emoji-id="5307728856503844559">🏦</tg-emoji>'
                 
                 result_text = (
                     f"{emoji_victory} <b>ПОБЕДА! Выпало</b> {combo_text}{gift_text}\n\n"
+                    f"{emoji_bank} <a href=\"https://t.me/toriw9/c/6\">Банк NFT</a>\n"
                     f"{emoji_link} <a href=\"https://t.me/torionnft\">Наш канал</a>\n"
                     f"{emoji_link} <a href=\"https://t.me/toristarsbot\">Дешевые звезды</a>"
                 )
@@ -1244,6 +1250,7 @@ async def finish_event(event: dict, message: Message):
             # Кастомные эмодзи
             emoji_victory = '<tg-emoji emoji-id="5271803701340706125">🎉</tg-emoji>'
             emoji_link = '<tg-emoji emoji-id="5415758949129404605">🔗</tg-emoji>'
+            emoji_bank = '<tg-emoji emoji-id="5307728856503844559">🏦</tg-emoji>'
             
             # Выдаем подарок победителю
             gift = db.get_random_unused_gift()
@@ -1257,6 +1264,7 @@ async def finish_event(event: dict, message: Message):
                 f"⏰ <b>Время события истекло!</b>\n\n"
                 f"{emoji_victory} <b>Победитель:</b> @{winner['username']}\n"
                 f"💰 Баллов: {winner['points']}{gift_text}\n\n"
+                f"{emoji_bank} <a href=\"https://t.me/toriw9/c/6\">Банк NFT</a>\n"
                 f"{emoji_link} <a href=\"https://t.me/torionnft\">Наш канал</a>\n"
                 f"{emoji_link} <a href=\"https://t.me/toristarsbot\">Дешевые звезды</a>"
             )
