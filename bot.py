@@ -245,19 +245,13 @@ async def cmd_gifts(message: Message):
     
     stats = db.get_gifts_stats()
     
-    # Получаем список подарков
-    with sqlite3.connect(db.db_file) as conn:
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT gift_name, gift_url, is_used, used_by_username 
-            FROM gifts 
-            ORDER BY is_used ASC, gift_name ASC 
-            LIMIT 100
-        ''')
-        gifts = [dict(row) for row in cursor.fetchall()]
+    # Получаем список доступных подарков
+    available_gifts = db.get_unused_gifts_list()
     
-    if not gifts:
+    # Получаем последние 5 использованных подарков
+    recent_used_gifts = db.get_recent_used_gifts(limit=5)
+    
+    if not available_gifts and not recent_used_gifts:
         await message.answer("📦 База подарков пуста!\n\nДобавь подарки через /admin → 🎁 Управление подарками")
         return
     
@@ -272,27 +266,25 @@ async def cmd_gifts(message: Message):
     text += f"{emoji_stats} <b>Статистика:</b>\n"
     text += f"Доступно: {stats['available']}\n"
     
-    if stats['available'] > 0:
+    if available_gifts:
         text += f"{emoji_available} <b>Доступные подарки:</b>\n"
         
         # Формируем список доступных подарков для цитирования
         available_list = ""
-        for gift in gifts:
-            if not gift['is_used']:
-                available_list += f"• <a href=\"{gift['gift_url']}\">{gift['gift_name']}</a>\n"
+        for gift in available_gifts:
+            available_list += f"• <a href=\"{gift['gift_url']}\">{gift['gift_name']}</a>\n"
         
         # Оборачиваем в expandable blockquote (сворачиваемая цитата)
         text += f"<blockquote expandable>{available_list}</blockquote>\n"
     
-    if stats['used'] > 0:
-        text += f"\n{emoji_used} <b>Выбитые подарки:</b>\n"
+    if recent_used_gifts:
+        text += f"\n{emoji_used} <b>Последние выбитые подарки:</b>\n"
         
-        # Формируем список использованных подарков для цитирования
+        # Формируем список последних 5 использованных подарков для цитирования
         used_list = ""
-        for gift in gifts:
-            if gift['is_used']:
-                username = gift['used_by_username'] or 'неизвестно'
-                used_list += f"• {gift['gift_name']} → @{username}\n"
+        for gift in recent_used_gifts:
+            username = gift['used_by_username'] or 'неизвестно'
+            used_list += f"• {gift['gift_name']} → @{username}\n"
         
         # Оборачиваем в expandable blockquote (сворачиваемая цитата)
         text += f"<blockquote expandable>{used_list}</blockquote>"
@@ -783,7 +775,8 @@ async def gifts_menu(callback: CallbackQuery):
         [InlineKeyboardButton(text="🔄 Синхронизировать с коллекцией", callback_data="gifts_sync_collection")],
         [InlineKeyboardButton(text="📥 Загрузить из файла", callback_data="gifts_load_file")],
         [InlineKeyboardButton(text="➕ Добавить вручную", callback_data="gifts_add_manual")],
-        [InlineKeyboardButton(text="📋 Список подарков", callback_data="gifts_list")],
+        [InlineKeyboardButton(text="�️ Удалить подарок", callback_data="gifts_delete")],
+        [InlineKeyboardButton(text="�📋 Список подарков", callback_data="gifts_list")],
         [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_menu")],
     ])
     
@@ -966,6 +959,105 @@ async def gifts_show_list(callback: CallbackQuery):
     )
 
 
+@dp.callback_query(F.data == "gifts_delete")
+async def gifts_delete_prompt(callback: CallbackQuery, state: FSMContext):
+    """Запрос на удаление подарка"""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ У вас нет доступа!", show_alert=True)
+        return
+    
+    # Получаем список доступных подарков
+    gifts = db.get_unused_gifts_list()
+    
+    if not gifts:
+        await callback.message.edit_text(
+            "❌ Нет доступных подарков для удаления!",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_gifts")]
+            ])
+        )
+        await callback.answer()
+        return
+    
+    # Формируем нумерованный список
+    gifts_list = ""
+    for i, gift in enumerate(gifts, 1):
+        gifts_list += f"{i}) {gift['gift_name']}\n"
+    
+    await callback.message.edit_text(
+        f"🗑 <b>Удаление подарков</b>\n\n"
+        f"<b>Доступные подарки:</b>\n\n"
+        f"{gifts_list}\n"
+        f"<b>Введи номера подарков для удаления через пробел:</b>\n"
+        f"<code>Пример: 1 3 5</code>\n\n"
+        f"Или отправь /cancel для отмены",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Отмена", callback_data="admin_gifts")]
+        ])
+    )
+    await state.set_state("waiting_for_gift_deletion")
+    await state.update_data(gifts=gifts)
+    await callback.answer()
+
+
+@dp.message(F.text, lambda message: message.from_user.id == ADMIN_ID)
+async def handle_gift_deletion(message: Message, state: FSMContext):
+    """Обработка ввода номеров подарков для удаления"""
+    current_state = await state.get_state()
+    
+    if current_state != "waiting_for_gift_deletion":
+        return
+    
+    text = message.text.strip()
+    
+    if text == "/cancel":
+        await state.clear()
+        await message.answer("❌ Удаление отменено")
+        return
+    
+    data = await state.get_data()
+    gifts = data.get('gifts', [])
+    
+    if not gifts:
+        await state.clear()
+        await message.answer("❌ Ошибка: список подарков не найден")
+        return
+    
+    # Парсим номера
+    try:
+        numbers = [int(num.strip()) for num in text.split()]
+    except ValueError:
+        await message.answer("❌ Неверный формат! Введи номера через пробел, например: <code>1 3 5</code>")
+        return
+    
+    # Проверяем валидность номеров
+    invalid_numbers = [num for num in numbers if num < 1 or num > len(gifts)]
+    if invalid_numbers:
+        await message.answer(f"❌ Неверные номера: {', '.join(map(str, invalid_numbers))}\nДоступные номера: 1-{len(gifts)}")
+        return
+    
+    # Удаляем подарки
+    deleted_count = 0
+    deleted_names = []
+    for num in numbers:
+        gift = gifts[num - 1]  # индекс с 0
+        success = db.delete_gift(gift['gift_id'])
+        if success:
+            deleted_count += 1
+            deleted_names.append(gift['gift_name'])
+    
+    await state.clear()
+    
+    if deleted_count > 0:
+        await message.answer(
+            f"✅ Удалено подарков: {deleted_count}\n\n"
+            f"Удаленные:\n" + "\n".join(f"• {name}" for name in deleted_names),
+            reply_markup=get_admin_keyboard()
+        )
+    else:
+        await message.answer("❌ Не удалось удалить подарки")
+
+
 @dp.message(F.dice)
 async def dice_handler(message: Message):
     """Обработчик сообщений с игровым автоматом"""
@@ -1065,17 +1157,18 @@ async def dice_handler(message: Message):
                         
                         # Кастомные эмодзи
                         emoji_victory = '<tg-emoji emoji-id="5271803701340706125">🎉</tg-emoji>'
-                        emoji_link = '<tg-emoji emoji-id="5415758949129404605">🔗</tg-emoji>'
-                        emoji_bank = '<tg-emoji emoji-id="5307728856503844559">🏦</tg-emoji>'
+                        emoji_bank = '<tg-emoji emoji-id="5308031922281154159">🏦</tg-emoji>'
+                        emoji_ludka = '<tg-emoji emoji-id="5307728856503844559">⭐</tg-emoji>'
+                        emoji_stars = '<tg-emoji emoji-id="5307707218458605938">💎</tg-emoji>'
                         
                         await message.reply(
-                            f"{emoji_victory} <b>ПОБЕДИТЕЛЬ СОБЫТИЯ!</b>\n\n"
-                            f"@{username} первым выбил {custom_emoji_text} {event['target_count']} раз!\n\n"
-                            f"Всего попаданий: {progress['total_hits']}\n"
-                            f"Событие завершено!{gift_text}\n\n"
-                            f"{emoji_bank} <a href=\"https://t.me/toriw9/c/6\">Банк NFT</a>\n"
-                            f"{emoji_link} <a href=\"https://t.me/torionnft\">Наш канал</a>\n"
-                            f"{emoji_link} <a href=\"https://t.me/toristarsbot\">Дешевые звезды</a>"
+                            f"<b>{emoji_victory} ПОБЕДИТЕЛЬ СОБЫТИЯ!</b>\n\n"
+                            f"<b>@{username} первым выбил {custom_emoji_text} {event['target_count']} раз!</b>\n\n"
+                            f"<b>Всего попаданий: {progress['total_hits']}</b>\n"
+                            f"<b>Событие завершено!</b>{gift_text}\n\n"
+                            f"{emoji_bank} <b><a href=\"https://t.me/toriw9/c/6\">Банк NFT</a></b>\n"
+                            f"{emoji_ludka} <b><a href=\"https://t.me/ludka1star\">Лудка за 1 звезду</a></b>\n"
+                            f"{emoji_stars} <b><a href=\"https://t.me/toristarsbot\">Дешевые звезды</a></b>"
                         )
                         
                         # Показываем финальную таблицу
@@ -1118,17 +1211,18 @@ async def dice_handler(message: Message):
                         
                         # Кастомные эмодзи
                         emoji_victory = '<tg-emoji emoji-id="5271803701340706125">🎉</tg-emoji>'
-                        emoji_link = '<tg-emoji emoji-id="5415758949129404605">🔗</tg-emoji>'
-                        emoji_bank = '<tg-emoji emoji-id="5307728856503844559">🏦</tg-emoji>'
+                        emoji_bank = '<tg-emoji emoji-id="5308031922281154159">🏦</tg-emoji>'
+                        emoji_ludka = '<tg-emoji emoji-id="5307728856503844559">⭐</tg-emoji>'
+                        emoji_stars = '<tg-emoji emoji-id="5307707218458605938">💎</tg-emoji>'
                         
                         await message.reply(
-                            f"{emoji_victory} <b>ПОБЕДИТЕЛЬ СОБЫТИЯ!</b>\n\n"
-                            f"@{username} выбил {custom_emoji_text} {event['target_count']} раз подряд!\n\n"
-                            f"Серия: {progress['current_streak']}\n"
-                            f"Событие завершено!{gift_text}\n\n"
-                            f"{emoji_bank} <a href=\"https://t.me/toriw9/c/6\">Банк NFT</a>\n"
-                            f"{emoji_link} <a href=\"https://t.me/torionnft\">Наш канал</a>\n"
-                            f"{emoji_link} <a href=\"https://t.me/toristarsbot\">Дешевые звезды</a>"
+                            f"<b>{emoji_victory} ПОБЕДИТЕЛЬ СОБЫТИЯ!</b>\n\n"
+                            f"<b>@{username} выбил {custom_emoji_text} {event['target_count']} раз подряд!</b>\n\n"
+                            f"<b>Серия: {progress['current_streak']}</b>\n"
+                            f"<b>Событие завершено!</b>{gift_text}\n\n"
+                            f"{emoji_bank} <b><a href=\"https://t.me/toriw9/c/6\">Банк NFT</a></b>\n"
+                            f"{emoji_ludka} <b><a href=\"https://t.me/ludka1star\">Лудка за 1 звезду</a></b>\n"
+                            f"{emoji_stars} <b><a href=\"https://t.me/toristarsbot\">Дешевые звезды</a></b>"
                         )
                         
                         # Показываем финальную таблицу
@@ -1186,14 +1280,15 @@ async def dice_handler(message: Message):
                 
                 # Кастомные эмодзи для сообщения
                 emoji_victory = '<tg-emoji emoji-id="5271803701340706125">🎉</tg-emoji>'
-                emoji_link = '<tg-emoji emoji-id="5415758949129404605">🔗</tg-emoji>'
-                emoji_bank = '<tg-emoji emoji-id="5307728856503844559">🏦</tg-emoji>'
+                emoji_bank = '<tg-emoji emoji-id="5308031922281154159">🏦</tg-emoji>'
+                emoji_ludka = '<tg-emoji emoji-id="5307728856503844559">⭐</tg-emoji>'
+                emoji_stars = '<tg-emoji emoji-id="5307707218458605938">💎</tg-emoji>'
                 
                 result_text = (
-                    f"{emoji_victory} <b>ПОБЕДА! Выпало</b> {combo_text}{gift_text}\n\n"
-                    f"{emoji_bank} <a href=\"https://t.me/toriw9/c/6\">Банк NFT</a>\n"
-                    f"{emoji_link} <a href=\"https://t.me/torionnft\">Наш канал</a>\n"
-                    f"{emoji_link} <a href=\"https://t.me/toristarsbot\">Дешевые звезды</a>"
+                    f"<b>{emoji_victory} ПОБЕДА! Выпало {combo_text}</b>{gift_text}\n\n"
+                    f"{emoji_bank} <b><a href=\"https://t.me/toriw9/c/6\">Банк NFT</a></b>\n"
+                    f"{emoji_ludka} <b><a href=\"https://t.me/ludka1star\">Лудка за 1 звезду</a></b>\n"
+                    f"{emoji_stars} <b><a href=\"https://t.me/toristarsbot\">Дешевые звезды</a></b>"
                 )
                 
                 await message.reply(result_text)
@@ -1249,8 +1344,9 @@ async def finish_event(event: dict, message: Message):
         if winner:
             # Кастомные эмодзи
             emoji_victory = '<tg-emoji emoji-id="5271803701340706125">🎉</tg-emoji>'
-            emoji_link = '<tg-emoji emoji-id="5415758949129404605">🔗</tg-emoji>'
-            emoji_bank = '<tg-emoji emoji-id="5307728856503844559">🏦</tg-emoji>'
+            emoji_bank = '<tg-emoji emoji-id="5308031922281154159">🏦</tg-emoji>'
+            emoji_ludka = '<tg-emoji emoji-id="5307728856503844559">⭐</tg-emoji>'
+            emoji_stars = '<tg-emoji emoji-id="5307707218458605938">💎</tg-emoji>'
             
             # Выдаем подарок победителю
             gift = db.get_random_unused_gift()
@@ -1261,12 +1357,12 @@ async def finish_event(event: dict, message: Message):
                 gift_text = f"\n\n{emoji_gift} <b>Твой подарок:</b>\n<a href=\"{gift['gift_url']}\">{gift['gift_name']}</a>"
             
             await message.answer(
-                f"⏰ <b>Время события истекло!</b>\n\n"
-                f"{emoji_victory} <b>Победитель:</b> @{winner['username']}\n"
-                f"💰 Баллов: {winner['points']}{gift_text}\n\n"
-                f"{emoji_bank} <a href=\"https://t.me/toriw9/c/6\">Банк NFT</a>\n"
-                f"{emoji_link} <a href=\"https://t.me/torionnft\">Наш канал</a>\n"
-                f"{emoji_link} <a href=\"https://t.me/toristarsbot\">Дешевые звезды</a>"
+                f"<b>⏰ Время события истекло!</b>\n\n"
+                f"<b>{emoji_victory} Победитель: @{winner['username']}</b>\n"
+                f"<b>💰 Баллов: {winner['points']}</b>{gift_text}\n\n"
+                f"{emoji_bank} <b><a href=\"https://t.me/toriw9/c/6\">Банк NFT</a></b>\n"
+                f"{emoji_ludka} <b><a href=\"https://t.me/ludka1star\">Лудка за 1 звезду</a></b>\n"
+                f"{emoji_stars} <b><a href=\"https://t.me/toristarsbot\">Дешевые звезды</a></b>"
             )
             
             # Показываем финальную таблицу

@@ -305,3 +305,65 @@ class Database:
         """Получить текущего лидера события"""
         leaders = self.get_event_leaderboard(event_id, limit=1, order_by='points')
         return leaders[0] if leaders else None
+    
+    def delete_gift(self, gift_id: int) -> bool:
+        """Удалить подарок из базы"""
+        with sqlite3.connect(self.db_file) as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM gifts WHERE gift_id = ?', (gift_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+    
+    def get_all_gifts(self, unused_only: bool = False) -> List[Dict]:
+        """Получить все подарки"""
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            
+            if unused_only:
+                cursor.execute('''
+                    SELECT * FROM gifts WHERE is_used = 0 ORDER BY gift_name ASC
+                ''')
+            else:
+                cursor.execute('''
+                    SELECT * FROM gifts ORDER BY is_used ASC, gift_name ASC
+                ''')
+            
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def get_recent_used_gifts(self, limit: int = 5) -> List[Dict]:
+        """Получить последние использованные подарки"""
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM gifts WHERE is_used = 1 ORDER BY used_at DESC LIMIT ?
+            ''', (limit,))
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def get_gift_by_id(self, gift_id: int) -> Optional[Dict]:
+        """Получить подарок по ID"""
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM gifts WHERE gift_id = ?', (gift_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+    
+    def get_unused_gifts_list(self) -> List[Dict]:
+        """Получить список неиспользованных подарков"""
+        with sqlite3.connect(self.db_file) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM gifts WHERE is_used = 0 ORDER BY gift_name ASC
+            ''')
+            return [dict(row) for row in cursor.fetchall()]
+    
+    def delete_gift_by_name(self, gift_name: str) -> bool:
+        """Удалить подарок по названию"""
+        with sqlite3.connect(self.db_file) as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM gifts WHERE gift_name = ? AND is_used = 0', (gift_name,))
+            conn.commit()
+            return cursor.rowcount > 0
