@@ -891,10 +891,14 @@ async def gifts_add_manual_prompt(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@dp.message(F.text.startswith("https://t.me/nft/"))
+@dp.message(F.text)
 async def process_gift_url(message: Message, state: FSMContext):
     """Обработка URL подарка от админа"""
     if message.from_user.id != ADMIN_ID:
+        return
+    
+    current_state = await state.get_state()
+    if current_state != "waiting_for_gifts":
         return
     
     text = message.text.strip()
@@ -906,8 +910,12 @@ async def process_gift_url(message: Message, state: FSMContext):
     
     for line in lines:
         line = line.strip()
-        if not line or not line.startswith('http'):
+        if not line:
             continue
+        
+        # Добавляем https:// если нет протокола
+        if not line.startswith('http'):
+            line = 'https://' + line
         
         if not validate_gift_url(line):
             failed_count += 1
