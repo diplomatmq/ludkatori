@@ -1073,6 +1073,11 @@ async def dice_handler(message: Message):
     dice = message.dice
     
     if dice and dice.emoji == "🎰":
+        # Игнорируем пересланные сообщения
+        if message.forward_from or message.forward_from_chat:
+            logger.info(f"Игнорируем пересланное сообщение с игровым автоматом")
+            return
+        
         chat_id = message.chat.id
         
         # Проверяем, что сообщение из разрешенного чата (не из лички и не из другого чата)
