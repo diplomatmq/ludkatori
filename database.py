@@ -70,6 +70,7 @@ class Database:
                     gift_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     gift_name TEXT NOT NULL,
                     gift_url TEXT NOT NULL UNIQUE,
+                    level INTEGER DEFAULT 1,
                     is_used INTEGER DEFAULT 0,
                     used_by_user_id INTEGER,
                     used_by_username TEXT,
@@ -77,6 +78,13 @@ class Database:
                     event_id INTEGER
                 )
             ''')
+            
+            # Проверяем, существует ли колонка level (для миграции)
+            try:
+                cursor.execute('SELECT level FROM gifts LIMIT 1')
+            except sqlite3.OperationalError:
+                # Колонки нет, добавляем
+                cursor.execute('ALTER TABLE gifts ADD COLUMN level INTEGER DEFAULT 1')
             
             conn.commit()
     
@@ -218,22 +226,22 @@ class Database:
             }
 
     
-    def add_gift(self, gift_name: str, gift_url: str):
+    def add_gift(self, gift_name: str, gift_url: str, level: int = 1):
         """Добавить подарок в базу"""
         with sqlite3.connect(self.db_file) as conn:
             cursor = conn.cursor()
             try:
                 cursor.execute('''
-                    INSERT INTO gifts (gift_name, gift_url)
-                    VALUES (?, ?)
-                ''', (gift_name, gift_url))
+                    INSERT INTO gifts (gift_name, gift_url, level)
+                    VALUES (?, ?, ?)
+                ''', (gift_name, gift_url, level))
                 conn.commit()
                 return True
             except sqlite3.IntegrityError:
                 # Подарок уже существует
                 return False
     
-    def add_gifts_bulk(self, gifts: List[tuple]):
+    def add_gifts_bulk(self, gifts: List[tuple], level: int = 1):
         """Добавить несколько подарков"""
         with sqlite3.connect(self.db_file) as conn:
             cursor = conn.cursor()
@@ -241,23 +249,23 @@ class Database:
             for gift_name, gift_url in gifts:
                 try:
                     cursor.execute('''
-                        INSERT INTO gifts (gift_name, gift_url)
-                        VALUES (?, ?)
-                    ''', (gift_name, gift_url))
+                        INSERT INTO gifts (gift_name, gift_url, level)
+                        VALUES (?, ?, ?)
+                    ''', (gift_name, gift_url, level))
                     added += 1
                 except sqlite3.IntegrityError:
                     continue
             conn.commit()
             return added
     
-    def get_random_unused_gift(self) -> Optional[Dict]:
-        """Получить случайный неиспользованный подарок"""
+    def get_random_unused_gift(self, level: int = 1) -> Optional[Dict]:
+        """Получить случайный неиспользованный подарок определённого уровня"""
         with sqlite3.connect(self.db_file) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT * FROM gifts WHERE is_used = 0 ORDER BY RANDOM() LIMIT 1
-            ''')
+                SELECT * FROM gifts WHERE is_used = 0 AND level = ? ORDER BY RANDOM() LIMIT 1
+            ''', (level,))
             row = cursor.fetchone()
             return dict(row) if row else None
     
@@ -284,10 +292,24 @@ class Database:
             cursor.execute('SELECT COUNT(*) FROM gifts WHERE is_used = 1')
             used = cursor.fetchone()[0]
             
+            # Статистика по уровням
+            level_stats = {}
+            for level in range(1, 5):
+                cursor.execute('SELECT COUNT(*) FROM gifts WHERE level = ?', (level,))
+                level_total = cursor.fetchone()[0]
+                cursor.execute('SELECT COUNT(*) FROM gifts WHERE level = ? AND is_used = 1', (level,))
+                level_used = cursor.fetchone()[0]
+                level_stats[level] = {
+                    'total': level_total,
+                    'used': level_used,
+                    'available': level_total - level_used
+                }
+            
             return {
                 'total': total,
                 'used': used,
-                'available': total - used
+                'available': total - used,
+                'levels': level_stats
             }
     
     def get_user_gifts(self, user_id: int) -> List[Dict]:
@@ -350,14 +372,21 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
     
-    def get_unused_gifts_list(self) -> List[Dict]:
+    def get_unused_gifts_list(self, level: Optional[int] = None) -> List[Dict]:
         """Получить список неиспользованных подарков"""
         with sqlite3.connect(self.db_file) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM gifts WHERE is_used = 0 ORDER BY gift_name ASC
-            ''')
+            
+            if level:
+                cursor.execute('''
+                    SELECT * FROM gifts WHERE is_used = 0 AND level = ? ORDER BY gift_name ASC
+                ''', (level,))
+            else:
+                cursor.execute('''
+                    SELECT * FROM gifts WHERE is_used = 0 ORDER BY level ASC, gift_name ASC
+                ''')
+            
             return [dict(row) for row in cursor.fetchall()]
     
     def delete_gift_by_name(self, gift_name: str) -> bool:
