@@ -6,6 +6,8 @@ services:
     container_name: ludkatori
     env_file:
       - .env
+    environment:
+      DATABASE_FILE: /app/data/bot_database.db
     volumes:
       - ./data:/app/data   # монтируем папку для SQLite .db файла
     restart: unless-stopped

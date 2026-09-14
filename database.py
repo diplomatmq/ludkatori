@@ -1,11 +1,14 @@
 import sqlite3
 import json
+import os
 from datetime import datetime
 from typing import Optional, List, Dict
 
 class Database:
     def __init__(self, db_file='bot_database.db'):
         self.db_file = db_file
+        db_directory = os.path.dirname(os.path.abspath(db_file))
+        os.makedirs(db_directory, exist_ok=True)
         self.init_db()
     
     def init_db(self):

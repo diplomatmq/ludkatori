@@ -4,6 +4,7 @@ import os
 import json
 import sqlite3
 import random
+import shutil
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
@@ -138,7 +139,21 @@ def save_config(config):
 config = load_config()
 
 # Инициализируем базу данных
-db = Database()
+database_file = os.getenv("DATABASE_FILE", os.path.join("data", "bot_database.db"))
+legacy_database_file = "bot_database.db"
+if (
+    os.path.abspath(database_file) != os.path.abspath(legacy_database_file)
+    and not os.path.exists(database_file)
+    and os.path.exists(legacy_database_file)
+):
+    os.makedirs(os.path.dirname(os.path.abspath(database_file)), exist_ok=True)
+    shutil.copy2(legacy_database_file, database_file)
+    for suffix in ("-wal", "-shm"):
+        legacy_sidecar = f"{legacy_database_file}{suffix}"
+        if os.path.exists(legacy_sidecar):
+            shutil.copy2(legacy_sidecar, f"{database_file}{suffix}")
+
+db = Database(database_file)
 
 # Хранилище активных сессий гифтов (в памяти)
 # Ключ: session_id, Значение: { user_id, username, current_level, current_gift, claimed, upgrade_message_id }
@@ -1431,7 +1446,7 @@ async def dice_handler(message: Message):
                         emoji_gift = '<tg-emoji emoji-id="5440824464168223114">🎁</tg-emoji>'
                         if gift:
                             db.mark_gift_as_used(gift['gift_id'], user_id, username, event['event_id'])
-                            gift_text = f"\n\n{emoji_gift} <b>Твой подарок:</b>\n<a href=\"{gift['gift_url']}\">{gift['gift_name']}</a>"
+                            gift_text = f"\n\n{emoji_gift} <b>Твой подарок:</b>\n<a href=\"{gift['gift_url']}\">{gift['gift_name']}</a>\n\n"
                         
                         # Кастомные эмодзи
                         emoji_victory = '<tg-emoji emoji-id="5271803701340706125">🎉</tg-emoji>'
@@ -1485,7 +1500,7 @@ async def dice_handler(message: Message):
                         emoji_gift = '<tg-emoji emoji-id="5440824464168223114">🎁</tg-emoji>'
                         if gift:
                             db.mark_gift_as_used(gift['gift_id'], user_id, username, event['event_id'])
-                            gift_text = f"\n\n{emoji_gift} <b>Твой подарок:</b>\n<a href=\"{gift['gift_url']}\">{gift['gift_name']}</a>"
+                            gift_text = f"\n\n{emoji_gift} <b>Твой подарок:</b>\n<a href=\"{gift['gift_url']}\">{gift['gift_name']}</a>\n\n"
                         
                         # Кастомные эмодзи
                         emoji_victory = '<tg-emoji emoji-id="5271803701340706125">🎉</tg-emoji>'
@@ -1630,7 +1645,7 @@ async def dice_handler(message: Message):
                 gift_text = ""
                 if gift:
                     db.mark_gift_as_used(gift['gift_id'], user_id, username, None)
-                    gift_text = f"\n\n{emoji_gift} <b>Твой подарок:</b>\n<a href=\"{gift['gift_url']}\">{gift['gift_name']}</a>"
+                    gift_text = f"\n\n{emoji_gift} <b>Твой подарок:</b>\n<a href=\"{gift['gift_url']}\">{gift['gift_name']}</a>\n\n"
                 
                 result_text = (
                     f"<b>{emoji_victory} ПОБЕДА! Выпало {combo_text}</b>{gift_text}\n\n"
@@ -2133,7 +2148,7 @@ async def finish_event(event: dict, message: Message):
             emoji_gift = '<tg-emoji emoji-id="5440824464168223114">🎁</tg-emoji>'
             if gift:
                 db.mark_gift_as_used(gift['gift_id'], winner['user_id'], winner['username'], event['event_id'])
-                gift_text = f"\n\n{emoji_gift} <b>Твой подарок:</b>\n<a href=\"{gift['gift_url']}\">{gift['gift_name']}</a>"
+                gift_text = f"\n\n{emoji_gift} <b>Твой подарок:</b>\n<a href=\"{gift['gift_url']}\">{gift['gift_name']}</a>\n\n"
             
             await message.answer(
                 f"<b>⏰ Время события истекло!</b>\n\n"
