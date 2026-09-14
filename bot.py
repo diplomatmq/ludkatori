@@ -1308,6 +1308,18 @@ async def free_spin_choice_handler(callback: CallbackQuery):
             session['bear_index']
         )
     )
+
+    if result == "bear":
+        username = callback.from_user.username or callback.from_user.first_name
+        try:
+            await bot.send_message(
+                ADMIN_ID,
+                f"🐻 <b>Медведь забран!</b>\n\n"
+                f"Пользователь: @{username} (ID: {callback.from_user.id})"
+            )
+        except Exception as e:
+            logger.error(f"Не удалось уведомить админа о забранном медведе: {e}")
+
     free_spin_sessions.pop(session_id, None)
     await callback.answer()
 
@@ -1969,12 +1981,8 @@ async def upgrade_gift_handler(callback: CallbackQuery):
         await callback.answer("❌ Апгрейд уже в процессе!", show_alert=True)
         return
     
-    # Блокируем обе кнопки сразу
+    # Блокируем повторную обработку через состояние сессии, не изменяя исходное сообщение
     session['upgrading'] = True
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except Exception:
-        pass
     
     current_level = session['current_level']
     chat_id = session['chat_id']
@@ -1985,7 +1993,7 @@ async def upgrade_gift_handler(callback: CallbackQuery):
             f"@{username}, кинь эмодзи 🎳"
         )
         
-        await callback.message.edit_text(upgrade_text, reply_markup=None)
+        await callback.message.answer(upgrade_text)
         await callback.answer()
         
         # Устанавливаем флаг ожидания броска от пользователя
@@ -1998,7 +2006,7 @@ async def upgrade_gift_handler(callback: CallbackQuery):
             f"@{username}, кинь эмодзи 🎯"
         )
         
-        await callback.message.edit_text(upgrade_text, reply_markup=None)
+        await callback.message.answer(upgrade_text)
         await callback.answer()
         
         # Устанавливаем флаг ожидания броска от пользователя
@@ -2013,7 +2021,7 @@ async def upgrade_gift_handler(callback: CallbackQuery):
         
         number_keyboard = get_dice_number_keyboard(session_id)
         session['upgrading'] = False  # Разблокируем, т.к. дальше нужно ждать выбора числа
-        await callback.message.edit_text(upgrade_text, reply_markup=number_keyboard)
+        await callback.message.answer(upgrade_text, reply_markup=number_keyboard)
         active_gift_sessions[session_id] = session
         await callback.answer()
     
@@ -2051,11 +2059,6 @@ async def pick_dice_number_handler(callback: CallbackQuery):
     # Блокируем, чтобы не было двойного выбора
     session['upgrading'] = True
     active_gift_sessions[session_id] = session
-    try:
-        await callback.message.edit_reply_markup(reply_markup=None)
-    except Exception:
-        pass
-    
     # Сохраняем выбранное число и устанавливаем ожидание броска от пользователя
     session['expected_dice_number'] = chosen_number
     session['awaiting_dice'] = "🎲"
@@ -2066,7 +2069,7 @@ async def pick_dice_number_handler(callback: CallbackQuery):
         f"🎲 <b>@{username} выбрал цифру: {chosen_number}</b>\n\n"
         "Теперь кинь кубик 🎲 и проверь, выпадет ли загаданное число!"
     )
-    await callback.message.edit_text(chosen_text, reply_markup=None)
+    await callback.message.answer(chosen_text)
     await callback.answer()
 
 
