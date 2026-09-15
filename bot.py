@@ -181,6 +181,19 @@ def generate_free_spin_session_id():
     return free_spin_session_counter
 
 
+def get_message_link(message: Message) -> str:
+    """Сформировать ссылку на сообщение в публичном или приватном чате."""
+    chat = message.chat
+    if chat.username:
+        return f"https://t.me/{chat.username}/{message.message_id}"
+
+    chat_id = str(chat.id)
+    if chat_id.startswith("-100"):
+        return f"https://t.me/c/{chat_id[4:]}/{message.message_id}"
+
+    return ""
+
+
 def get_free_spin_keyboard(session_id, selected_index=None, result=None, bear_index=None):
     """Три кнопки выбора ячейки для фри-спина"""
     button_emoji = "5359628193336669414"
@@ -1197,17 +1210,42 @@ async def gifts_show_list(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "gifts_delete")
 async def gifts_delete_prompt(callback: CallbackQuery, state: FSMContext):
-    """Запрос на удаление подарка"""
+    """Выбор уровня банка для удаления подарков"""
     if callback.from_user.id != ADMIN_ID:
         await callback.answer("❌ У вас нет доступа!", show_alert=True)
         return
-    
-    # Получаем список доступных подарков
-    gifts = db.get_unused_gifts_list()
+
+    level_names = {1: "Обычный банк", 2: "Major Bank", 3: "Premium Bank", 4: "Elite Bank"}
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"1 lvl - {level_names[1]}", callback_data="delete_level_1")],
+        [InlineKeyboardButton(text=f"2 lvl - {level_names[2]}", callback_data="delete_level_2")],
+        [InlineKeyboardButton(text=f"3 lvl - {level_names[3]}", callback_data="delete_level_3")],
+        [InlineKeyboardButton(text=f"4 lvl - {level_names[4]}", callback_data="delete_level_4")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_gifts")],
+    ])
+
+    await callback.message.edit_text(
+        "🗑 <b>Удаление подарков</b>\n\n"
+        "Выбери уровень банка:",
+        reply_markup=keyboard
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("delete_level_"))
+async def gifts_delete_level(callback: CallbackQuery, state: FSMContext):
+    """Показать доступные подарки выбранного уровня для удаления"""
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("❌ У вас нет доступа!", show_alert=True)
+        return
+
+    level = int(callback.data.split("_")[-1])
+    level_names = {1: "Обычный банк", 2: "Major Bank", 3: "Premium Bank", 4: "Elite Bank"}
+    gifts = db.get_unused_gifts_list(level=level)
     
     if not gifts:
         await callback.message.edit_text(
-            "❌ Нет доступных подарков для удаления!",
+            f"❌ В банке {level} уровня нет доступных подарков для удаления!",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="◀️ Назад", callback_data="admin_gifts")]
             ])
@@ -1222,6 +1260,7 @@ async def gifts_delete_prompt(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.edit_text(
         f"🗑 <b>Удаление подарков</b>\n\n"
+        f"<b>Уровень:</b> {level} ({level_names[level]})\n\n"
         f"<b>Доступные подарки:</b>\n\n"
         f"{gifts_list}\n"
         f"<b>Введи номера подарков для удаления через пробел:</b>\n"
@@ -1232,7 +1271,7 @@ async def gifts_delete_prompt(callback: CallbackQuery, state: FSMContext):
         ])
     )
     await state.set_state("waiting_for_gift_deletion")
-    await state.update_data(gifts=gifts)
+    await state.update_data(gifts=gifts, level=level)
     await callback.answer()
 
 
@@ -1330,7 +1369,8 @@ async def free_spin_choice_handler(callback: CallbackQuery):
             await bot.send_message(
                 ADMIN_ID,
                 f"🐻 <b>Медведь забран!</b>\n\n"
-                f"Пользователь: @{username} (ID: {callback.from_user.id})"
+                f"Пользователь: @{username} (ID: {callback.from_user.id})\n"
+                f"Сообщение: <a href=\"{get_message_link(callback.message)}\">открыть</a>"
             )
         except Exception as e:
             logger.error(f"Не удалось уведомить админа о забранном медведе: {e}")
@@ -1698,6 +1738,11 @@ async def resolve_upgrade_dice_roll(session_id: int, emoji: str, dice_value: int
     user_id = session['user_id']
     username = session['username']
     current_level = session['current_level']
+    message_link = get_message_link(message)
+    message_link_text = (
+        f"\nСообщение: <a href=\"{message_link}\">открыть</a>"
+        if message_link else ""
+    )
     
     # ========== АПГРЕЙД 1 -> 2 (боулинг 🎳) ==========
     if current_level == 1 and emoji == "🎳":
@@ -1716,7 +1761,8 @@ async def resolve_upgrade_dice_roll(session_id: int, emoji: str, dice_value: int
                     await bot.send_message(ADMIN_ID,
                         f"🎁 <b>Гифт забран (апгрейд не удался - банк пуст)</b>\n\n"
                         f"Пользователь: @{username} (ID: {user_id})\n"
-                        f"Гифт: <a href=\"{session['current_gift']['gift_url']}\">{session['current_gift']['gift_name']}</a>")
+                        f"Гифт: <a href=\"{session['current_gift']['gift_url']}\">{session['current_gift']['gift_name']}</a>"
+                        f"{message_link_text}")
                 except Exception:
                     pass
                 
@@ -1737,22 +1783,23 @@ async def resolve_upgrade_dice_roll(session_id: int, emoji: str, dice_value: int
             active_gift_sessions[session_id] = session
             
             success_text = (
-                "<b>Поздравляем! Ты выбил страйк📍</b>\n\n"
+                "<b>Поздравляем! Ты выбил страйк "
+                "<tg-emoji emoji-id=\"5251211295956434177\">🎳</tg-emoji></b>\n\n"
                 "<tg-emoji emoji-id=\"5440824464168223114\">🎁</tg-emoji> <b>Твой подарок:</b>\n"
-                f"<a href=\"{new_gift['gift_url']}\">{new_gift['gift_name']}</a>\n\n"
-                "Хочешь улучшить свой подарок в два раза и забрать приз с "
+                f"<b><a href=\"{new_gift['gift_url']}\">{new_gift['gift_name']}</a></b>\n\n"
+                "<b>Хочешь улучшить свой подарок в два раза и забрать приз с "
                 f"<a href=\"{LEVEL_BANK_LINKS[3]}\">Premium Bank</a>?"
-                f"{LEVEL_BANK_CUSTOM_EMOJI[3]}\n"
-                "<blockquote>Тебе предстоит попасть в центр мишени, "
-                "в противном случае приз сгорает🎯</blockquote>"
+                f"{LEVEL_BANK_CUSTOM_EMOJI[3]}</b>\n"
+                "<blockquote><b>Тебе предстоит попасть в центр мишени, "
+                "в противном случае приз сгорает🎯</b></blockquote>"
             )
             new_keyboard = get_claim_upgrade_keyboard(session_id, show_upgrade=True)
             await message.reply(success_text, reply_markup=new_keyboard)
         else:
             session['claimed'] = True
             fail_text = (
-                f"💥 <b>Не повезло!</b>\n\n"
-                "🕯 Приз сгорел..."
+                '<tg-emoji emoji-id="5278392881252435465">💥</tg-emoji> <b>Не повезло!</b>\n\n'
+                '<tg-emoji emoji-id="6028419897711663859">🕯</tg-emoji> Приз сгорел...'
             )
             await message.reply(fail_text)
             active_gift_sessions.pop(session_id, None)
@@ -1775,7 +1822,8 @@ async def resolve_upgrade_dice_roll(session_id: int, emoji: str, dice_value: int
                     await bot.send_message(ADMIN_ID,
                         f"🎁 <b>Гифт забран (апгрейд не удался - банк пуст)</b>\n\n"
                         f"Пользователь: @{username} (ID: {user_id})\n"
-                        f"Гифт: <a href=\"{session['current_gift']['gift_url']}\">{session['current_gift']['gift_name']}</a>")
+                        f"Гифт: <a href=\"{session['current_gift']['gift_url']}\">{session['current_gift']['gift_name']}</a>"
+                        f"{message_link_text}")
                 except Exception:
                     pass
                 
@@ -1796,22 +1844,23 @@ async def resolve_upgrade_dice_roll(session_id: int, emoji: str, dice_value: int
             active_gift_sessions[session_id] = session
             
             success_text = (
-                "<b>Занос! Ты ограбил нас😵</b>\n\n"
+                "<b>Занос! Ты ограбил нас "
+                "<tg-emoji emoji-id=\"5271880418046549922\">😵</tg-emoji></b>\n\n"
                 "<tg-emoji emoji-id=\"5440824464168223114\">🎁</tg-emoji> <b>Твой подарок:</b>\n"
-                f"<a href=\"{new_gift['gift_url']}\">{new_gift['gift_name']}</a>\n\n"
-                "Хочешь улучшить свой подарок в два раза и забрать приз с "
+                f"<b><a href=\"{new_gift['gift_url']}\">{new_gift['gift_name']}</a></b>\n\n"
+                "<b>Хочешь улучшить свой подарок в два раза и забрать приз с "
                 f"<a href=\"{LEVEL_BANK_LINKS[4]}\">Elite Bank</a>?"
-                f"{LEVEL_BANK_CUSTOM_EMOJI[4]}\n"
-                "<blockquote>Тебе предстоит выбрать число, которое должно выпасть на твоем кубике, "
-                "в противном случае приз сгорает🎲</blockquote>"
+                f"{LEVEL_BANK_CUSTOM_EMOJI[4]}</b>\n"
+                "<blockquote><b>Тебе предстоит выбрать число, которое должно выпасть на твоем кубике, "
+                "в противном случае приз сгорает🎲</b></blockquote>"
             )
             new_keyboard = get_claim_upgrade_keyboard(session_id, show_upgrade=True)
             await message.reply(success_text, reply_markup=new_keyboard)
         else:
             session['claimed'] = True
             fail_text = (
-                f"💥 <b>Мимо!</b>\n\n"
-                "🕯 Приз сгорел..."
+                '<tg-emoji emoji-id="5278392881252435465">💥</tg-emoji> <b>Не повезло!</b>\n\n'
+                '<tg-emoji emoji-id="6028419897711663859">🕯</tg-emoji> Приз сгорел...'
             )
             await message.reply(fail_text)
             active_gift_sessions.pop(session_id, None)
@@ -1843,7 +1892,8 @@ async def resolve_upgrade_dice_roll(session_id: int, emoji: str, dice_value: int
                         f"🎁 <b>Гифт забран!</b>\n\n"
                         f"Пользователь: @{username} (ID: {user_id})\n"
                         f"Уровень: 3 (Elite Bank пуст)\n"
-                        f"Гифт: <a href=\"{session['current_gift']['gift_url']}\">{session['current_gift']['gift_name']}</a>")
+                        f"Гифт: <a href=\"{session['current_gift']['gift_url']}\">{session['current_gift']['gift_name']}</a>"
+                        f"{message_link_text}")
                 except Exception:
                     pass
                 
@@ -1867,6 +1917,7 @@ async def resolve_upgrade_dice_roll(session_id: int, emoji: str, dice_value: int
                     f"Пользователь: @{username} (ID: {user_id})\n"
                     f"Уровень: 4 (Elite Bank - МАКСИМУМ)\n"
                     f"Гифт: <a href=\"{new_gift['gift_url']}\">{new_gift['gift_name']}</a>"
+                    f"{message_link_text}"
                 )
             except Exception as e:
                 logger.error(f"Не удалось отправить админу: {e}")
@@ -1878,9 +1929,11 @@ async def resolve_upgrade_dice_roll(session_id: int, emoji: str, dice_value: int
             emoji_stars = '<tg-emoji emoji-id="5307707218458605938">💎</tg-emoji>'
             
             final_text = (
-                f"<b>👏 Наши аплодисменты! Ты самый главный лудик этого чата👑</b>\n\n"
+                "<b><tg-emoji emoji-id=\"5857435656225038831\">👏</tg-emoji> "
+                "Наши аплодисменты! Ты самый главный лудик этого чата "
+                "<tg-emoji emoji-id=\"5390858914885568318\">👑</tg-emoji></b>\n\n"
                 f"{emoji_gift} <b>Твой подарок:</b>\n"
-                f"<a href=\"{new_gift['gift_url']}\">{new_gift['gift_name']}</a>\n\n"
+                f"<b><a href=\"{new_gift['gift_url']}\">{new_gift['gift_name']}</a></b>\n\n"
                 f"<b>Твой приз уже в пути {FINAL_PRIZE_CUSTOM_EMOJI}</b>\n\n"
                 f"{LEVEL_BANK_CUSTOM_EMOJI[4]} <b><a href=\"{LEVEL_BANK_LINKS[4]}\">Elite Bank</a></b>\n"
                 f"{emoji_ludka} <b><a href=\"https://t.me/ludka1star\">Лудка за 1 звезду</a></b>\n"
@@ -1891,8 +1944,8 @@ async def resolve_upgrade_dice_roll(session_id: int, emoji: str, dice_value: int
         else:
             session['claimed'] = True
             fail_text = (
-                f"💥 <b>Не сложилось!</b>\n\n"
-                "🕯 Приз сгорел..."
+                '<tg-emoji emoji-id="5278392881252435465">💥</tg-emoji> <b>Не повезло!</b>\n\n'
+                '<tg-emoji emoji-id="6028419897711663859">🕯</tg-emoji> Приз сгорел...'
             )
             await message.reply(fail_text)
             active_gift_sessions.pop(session_id, None)
@@ -1945,7 +1998,8 @@ async def claim_gift_handler(callback: CallbackQuery):
             f"🎁 <b>Гифт забран!</b>\n\n"
             f"Пользователь: @{username} (ID: {user_id})\n"
             f"Уровень: {current_level} ({LEVEL_BANK_NAMES[current_level]})\n"
-            f"Гифт: <a href=\"{current_gift['gift_url']}\">{current_gift['gift_name']}</a>"
+            f"Гифт: <a href=\"{current_gift['gift_url']}\">{current_gift['gift_name']}</a>\n"
+            f"Сообщение: <a href=\"{get_message_link(callback.message)}\">открыть</a>"
         )
     except Exception as e:
         logger.error(f"Не удалось отправить сообщение админу: {e}")
@@ -1957,11 +2011,12 @@ async def claim_gift_handler(callback: CallbackQuery):
     emoji_stars = '<tg-emoji emoji-id="5307707218458605938">💎</tg-emoji>'
     
     final_text = (
-        f"<b>{emoji_victory} ПОБЕДА! Выпало 7️⃣ 7️⃣ 7️⃣</b>\n\n"
+        f"<b>{emoji_victory} ПОБЕДА! Приз забран</b>\n\n"
         f"{emoji_gift} <b>Твой подарок:</b>\n"
         f"<a href=\"{current_gift['gift_url']}\">{current_gift['gift_name']}</a>\n\n"
         f"<b>Твой приз уже в пути {FINAL_PRIZE_CUSTOM_EMOJI}</b>\n"
-        f"Админ уведомлен 📨\n\n"
+        '<blockquote>Админ уведомлен 📨</blockquote>\n'
+        '<tg-emoji emoji-id="5251324597193709038">📨</tg-emoji>\n\n'
         f"{LEVEL_BANK_CUSTOM_EMOJI.get(current_level, emoji_bank)} <b><a href=\"{LEVEL_BANK_LINKS.get(current_level, LEVEL_BANK_LINKS[1])}\">{LEVEL_BANK_NAMES.get(current_level, 'Банк NFT')}</a></b>\n"
         f"{emoji_ludka} <b><a href=\"https://t.me/ludka1star\">Лудка за 1 звезду</a></b>\n"
         f"{emoji_stars} <b><a href=\"https://t.me/toristarsbot\">Дешевые звезды</a></b>"

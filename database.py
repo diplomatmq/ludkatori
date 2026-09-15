@@ -88,6 +88,44 @@ class Database:
             except sqlite3.OperationalError:
                 # Колонки нет, добавляем
                 cursor.execute('ALTER TABLE gifts ADD COLUMN level INTEGER DEFAULT 1')
+
+            # Убираем ограничение UNIQUE с URL, чтобы подарок можно было
+            # добавить в банк повторно после предыдущей выдачи.
+            gift_indexes = cursor.execute("PRAGMA index_list('gifts')").fetchall()
+            has_unique_url = False
+            for index in gift_indexes:
+                if index[2]:
+                    index_columns = cursor.execute(
+                        f'PRAGMA index_info("{index[1]}")'
+                    ).fetchall()
+                    if [column[2] for column in index_columns] == ['gift_url']:
+                        has_unique_url = True
+                        break
+
+            if has_unique_url:
+                cursor.execute('''
+                    CREATE TABLE gifts_without_unique_url (
+                        gift_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        gift_name TEXT NOT NULL,
+                        gift_url TEXT NOT NULL,
+                        level INTEGER DEFAULT 1,
+                        is_used INTEGER DEFAULT 0,
+                        used_by_user_id INTEGER,
+                        used_by_username TEXT,
+                        used_at TEXT,
+                        event_id INTEGER
+                    )
+                ''')
+                cursor.execute('''
+                    INSERT INTO gifts_without_unique_url
+                    (gift_id, gift_name, gift_url, level, is_used,
+                     used_by_user_id, used_by_username, used_at, event_id)
+                    SELECT gift_id, gift_name, gift_url, level, is_used,
+                           used_by_user_id, used_by_username, used_at, event_id
+                    FROM gifts
+                ''')
+                cursor.execute('DROP TABLE gifts')
+                cursor.execute('ALTER TABLE gifts_without_unique_url RENAME TO gifts')
             
             conn.commit()
     
@@ -339,21 +377,26 @@ class Database:
             conn.commit()
             return cursor.rowcount > 0
     
-    def get_all_gifts(self, unused_only: bool = False) -> List[Dict]:
+    def get_all_gifts(self, unused_only: bool = False, level: Optional[int] = None) -> List[Dict]:
         """Получить все подарки"""
         with sqlite3.connect(self.db_file) as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
-            
+
+            conditions = []
+            parameters = []
             if unused_only:
-                cursor.execute('''
-                    SELECT * FROM gifts WHERE is_used = 0 ORDER BY gift_name ASC
-                ''')
-            else:
-                cursor.execute('''
-                    SELECT * FROM gifts ORDER BY is_used ASC, gift_name ASC
-                ''')
-            
+                conditions.append('is_used = 0')
+            if level is not None:
+                conditions.append('level = ?')
+                parameters.append(level)
+
+            where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ''
+            cursor.execute(
+                f'SELECT * FROM gifts {where_clause} ORDER BY is_used ASC, gift_name ASC',
+                parameters
+            )
+
             return [dict(row) for row in cursor.fetchall()]
     
     def get_recent_used_gifts(self, limit: int = 5) -> List[Dict]:
